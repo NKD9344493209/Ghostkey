@@ -49,3 +49,4 @@ python -m streamlit run app.py   -> the product (C4 voice lives here)
 5. Reject a correction -> word protected forever. Show Typing Profile tab.
 6. Turn off WiFi -> everything still works.
 hi everyone
+
