@@ -39,12 +39,27 @@ def apply_corrections():
     ss.input_box = ss.get("last_corrected", ss.get("input_box", ""))
 
 
+THEMES = {
+    "Midnight":  dict(key="#1e2530", text="#e8edf5", border="#313b4b",
+                      press="#3d7bfd", out_bg="#10151d", out_bd="#2a3444"),
+    "Snow":      dict(key="#f4f6f9", text="#1a2230", border="#d4dae3",
+                      press="#2f6df6", out_bg="#ffffff", out_bd="#d4dae3"),
+    "Neon":      dict(key="#0d0d17", text="#39ff88", border="#39ff88",
+                      press="#ff2ec4", out_bg="#0d0d17", out_bd="#39ff88"),
+    "Sunset":    dict(key="#3b2033", text="#ffe3c2", border="#7a3b52",
+                      press="#ff7043", out_bg="#2a1626", out_bd="#7a3b52"),
+}
+
 st.markdown(
     "<h1 style='margin-bottom:0'>⌨️ GhostKey</h1>"
     "<p style='color:#888;margin-top:2px'>Six NLP concepts. One keyboard. "
     "Corrects eyes-free typing — and explains itself. 100% offline.</p>",
     unsafe_allow_html=True,
 )
+
+theme_name = st.selectbox("🎨 Keyboard theme", list(THEMES),
+                          label_visibility="collapsed")
+T = THEMES[theme_name]
 
 tab_kb, tab_profile, tab_about = st.tabs(
     ["Keyboard", "Typing Profile", "How it works"])
@@ -73,29 +88,56 @@ with tab_kb:
           const btn = document.getElementById("mic");
           const out = document.getElementById("heard");
           const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+          function insertIntoBox(text) {
+            // reach the Streamlit textarea from inside the component iframe
+            try {
+              const doc = window.parent.document;
+              const ta = doc.querySelector('textarea');
+              if (!ta) return false;
+              const setter = Object.getOwnPropertyDescriptor(
+                  window.parent.HTMLTextAreaElement.prototype, 'value').set;
+              const existing = ta.value ? ta.value + ' ' : '';
+              setter.call(ta, existing + text);
+              ta.dispatchEvent(new Event('input', { bubbles: true }));
+              // commit the value so Streamlit reruns and corrects it
+              ta.dispatchEvent(new KeyboardEvent('keydown',
+                  { key: 'Enter', ctrlKey: true, bubbles: true }));
+              return true;
+            } catch (e) { return false; }
+          }
+
           if (!SR) { btn.disabled = true; out.textContent = "STT needs Chrome/Edge"; }
           else {
             const rec = new SR(); rec.lang = "en-IN";
             btn.onclick = () => { out.textContent = "listening..."; rec.start(); };
             rec.onresult = e => {
               const text = e.results[0][0].transcript;
-              out.textContent = '"' + text + '" — copy into the box above';
+              if (insertIntoBox(text)) {
+                out.textContent = '✓ inserted: "' + text + '"';
+              } else {
+                out.textContent = '"' + text + '" — paste into the box';
+              }
             };
             rec.onerror = e => { out.textContent = "mic error: " + e.error; };
           }
         </script>""", height=55)
 
         # ---- on-screen QWERTY (eyes-free typing surface) ----
-        components.html("""
+        components.html(f"""
         <style>
-          .kb { user-select:none; font-family:system-ui; }
-          .row { display:flex; justify-content:center; margin:3px 0; }
-          .key { width:42px;height:50px;margin:3px;border-radius:8px;
-            background:#1e2530;color:#e8edf5;border:1px solid #313b4b;
-            display:flex;align-items:center;justify-content:center;
-            font-size:17px;cursor:pointer;transition:all .06s }
-          .key:active { background:#3d7bfd; transform:scale(1.08) }
-          .wide { width:86px;font-size:12px } .space { width:210px }
+          .kb {{ user-select:none; font-family:system-ui; }}
+          .row {{ display:flex; justify-content:center; margin:3px 0; }}
+          .key {{ flex:1 1 0; max-width:52px; min-width:26px; height:50px;
+            margin:2px; border-radius:8px;
+            background:{T['key']}; color:{T['text']};
+            border:1px solid {T['border']};
+            display:flex; align-items:center; justify-content:center;
+            font-size:clamp(13px,3.5vw,17px); cursor:pointer;
+            transition:all .06s; touch-action:manipulation }}
+          .key:active {{ background:{T['press']}; transform:scale(1.08) }}
+          .wide {{ max-width:100px; flex:2 1 0; font-size:12px }}
+          .space {{ max-width:230px; flex:4 1 0 }}
         </style>
         <div class="kb" id="kb"></div>
         <p style="color:#8b95a5;font-family:system-ui;font-size:13px">
@@ -103,26 +145,26 @@ with tab_kb:
         <script>
           const rows = ["qwertyuiop","asdfghjkl","zxcvbnm"];
           const kb = document.getElementById("kb");
-          rows.forEach(r => {
+          rows.forEach(r => {{
             const div = document.createElement("div"); div.className = "row";
-            [...r].forEach(ch => {
+            [...r].forEach(ch => {{
               const k = document.createElement("div");
               k.className = "key"; k.textContent = ch;
-              k.onclick = () => tap(ch); div.appendChild(k); });
-            kb.appendChild(div); });
+              k.onclick = () => tap(ch); div.appendChild(k); }});
+            kb.appendChild(div); }});
           const last = document.createElement("div"); last.className = "row";
-          const mk = (l,c,f) => { const k = document.createElement("div");
+          const mk = (l,c,f) => {{ const k = document.createElement("div");
             k.className = "key "+c; k.textContent = l; k.onclick = f;
-            last.appendChild(k); };
-          mk("⌫","wide",()=>tap("BKSP"));
+            last.appendChild(k); }};
+          mk("\u232b","wide",()=>tap("BKSP"));
           mk("space","space",()=>tap(" "));
-          mk("🔊","wide",()=>speechSynthesis.speak(
+          mk("\U0001F50A","wide",()=>speechSynthesis.speak(
               new SpeechSynthesisUtterance(buffer)));
           kb.appendChild(last);
           let buffer = "";
-          function tap(ch){
+          function tap(ch){{
             if (ch==="BKSP") buffer = buffer.slice(0,-1); else buffer += ch;
-            document.getElementById("echo").textContent = buffer || "\\u00A0"; }
+            document.getElementById("echo").textContent = buffer || "\u00A0"; }}
         </script>""", height=290)
 
     with col_out:
@@ -133,7 +175,12 @@ with tab_kb:
 
         if typed.strip():
             if enabled:
-                r = pipe.process(typed, auto_threshold=auto_th)
+                try:
+                    r = pipe.process(typed, auto_threshold=auto_th)
+                except Exception as e:
+                    st.error(f"Correction engine error: {e}")
+                    r = {"corrected": typed, "report": [], "next_words": [],
+                         "translation": None, "protected": []}
             else:
                 r = {"corrected": typed, "report": [], "next_words": [],
                      "translation": None, "protected": []}
@@ -141,7 +188,8 @@ with tab_kb:
             ss.last_corrected = r["corrected"]
             st.markdown(
                 f"<div style='font-size:24px;padding:14px;border-radius:10px;"
-                f"background:#10151d;border:1px solid #2a3444'>"
+                f"background:{T['out_bg']};border:1px solid {T['out_bd']};"
+                f"color:{T['text']}'>"
                 f"{r['corrected']}</div>", unsafe_allow_html=True)
 
             ba, bc = st.columns(2)
@@ -184,7 +232,7 @@ with tab_kb:
                        if x[3].startswith(("auto", "suggest", "tanglish-fix"))]
             if enabled and changed:
                 st.markdown("#### Why these corrections?")
-                for token, best, conf, action, wtype in changed:
+                for bi, (token, best, conf, action, wtype) in enumerate(changed):
                     label = f"'{token}' → '{best}'  ({conf:.0%}, {action}, type: {wtype})"
                     with st.expander(label):
                         _, _, expl = pipe.ck.correct_word(
@@ -192,12 +240,12 @@ with tab_kb:
                         if expl:
                             st.table(expl)
                         b1, b2 = st.columns(2)
-                        if b1.button("✓ Accept", key=f"a{token}{best}"):
+                        if b1.button("✓ Accept", key=f"a{bi}_{token}_{best}"):
                             pipe.ck.feedback(token, best, True)
                             ss.log.append((token, best, "accepted"))
                             st.success("Learned.")
                         if b2.button("✗ Never correct this",
-                                     key=f"r{token}{best}"):
+                                     key=f"r{bi}_{token}_{best}"):
                             pipe.ck.feedback(token, best, False)
                             ss.never.add(token.lower())
                             ss.log.append((token, best, "rejected"))

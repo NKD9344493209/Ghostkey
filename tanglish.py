@@ -85,7 +85,7 @@ def correct_tanglish_word(word, max_dist=1.6):
         return w, 1.0
     # short words and vowel-less tokens (acronyms like nlp, css) are
     # too risky to fuzzy-match - leave them alone
-    if len(w) < 4 or not set(w) & set("aeiou"):
+    if len(w) < 4 or not set(w) & set("aeiouy"):
         return w, 0.0
     best, bd = None, 99
     for t in TANGLISH_WORDS:

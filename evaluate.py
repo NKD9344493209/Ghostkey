@@ -36,7 +36,7 @@ class ModelA:
     """Dictionary + plain edit distance + frequency prior."""
     name = "A: plain edit distance"
     def __init__(self, lm): self.lm = lm
-    def correct(self, word, prev=None):
+    def correct(self, word, prev=None, nxt=None):
         w = word.lower()
         if self.lm.is_word(w):
             return w
@@ -51,7 +51,7 @@ class ModelB:
     """Dictionary + keyboard-weighted edit distance + frequency prior."""
     name = "B: + keyboard weighting"
     def __init__(self, lm): self.lm = lm
-    def correct(self, word, prev=None):
+    def correct(self, word, prev=None, nxt=None):
         w = word.lower()
         if self.lm.is_word(w):
             return w
@@ -68,8 +68,8 @@ class ModelC:
     """Full GhostKey ensemble (keyboard + bigram context + priors)."""
     name = "C: + bigram context (GhostKey)"
     def __init__(self, lm): self.ck = GhostKeyCorrector(lm)
-    def correct(self, word, prev=None):
-        best, conf, _ = self.ck.correct_word(word, prev)
+    def correct(self, word, prev=None, nxt=None):
+        best, conf, _ = self.ck.correct_word(word, prev, nxt)
         return best
 
 
@@ -79,9 +79,9 @@ class ModelD:
     def __init__(self, lm, threshold=0.75): 
         self.ck = GhostKeyCorrector(lm)
         self.threshold = threshold
-    def correct(self, word, prev=None):
+    def correct(self, word, prev=None, nxt=None):
         w = word.lower()
-        best, conf, _ = self.ck.correct_word(w, prev)
+        best, conf, _ = self.ck.correct_word(w, prev, nxt)
         if best != w:
             # changing a dictionary word needs high confidence;
             # changing a non-word needs only moderate confidence
@@ -102,8 +102,10 @@ def evaluate(n_test=400, error_prob=0.5, seed=99):
         broke_clean = clean_total = 0
         for d in data:
             prev = None
-            for clean_w, typed_w in zip(d["clean"], d["corrupt"]):
-                out = model.correct(typed_w, prev)
+            corr = d["corrupt"]
+            for wi, (clean_w, typed_w) in enumerate(zip(d["clean"], corr)):
+                nxt = corr[wi + 1] if wi + 1 < len(corr) else None
+                out = model.correct(typed_w, prev, nxt)
                 if typed_w != clean_w:                # word was corrupted
                     corrupted_total += 1
                     if out == clean_w:

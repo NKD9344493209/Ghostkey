@@ -53,20 +53,51 @@ class GhostKeyPipeline:
         prev = None
         has_tanglish = False
 
-        for token in text.split():
+        def split_punct(tok):
+            """'hello,' -> ('', 'hello', ','); keeps punctuation safe."""
+            i, j = 0, len(tok)
+            while i < j and not tok[i].isalnum(): i += 1
+            while j > i and not tok[j-1].isalnum(): j -= 1
+            return tok[:i], tok[i:j], tok[j:]
+
+        def recase(orig_core, corrected):
+            if orig_core[:1].isupper():
+                return corrected[:1].upper() + corrected[1:]
+            return corrected
+
+        tokens_list = text.split()
+        # merge pass: "th e" -> "the" (a space typed mid-word)
+        merged, k = [], 0
+        while k < len(tokens_list):
+            w1 = tokens_list[k].lower()
+            w2 = (tokens_list[k + 1].lower()
+                  if k + 1 < len(tokens_list) else None)
+            if (w2 and w1.isalpha() and w2.isalpha()
+                    and self.ck.lm.freq[w1] < 5      # w1 is not real usage
+                    and self.ck.lm.freq[w1 + w2] >= 20):
+                merged.append(tokens_list[k] + tokens_list[k + 1])
+                k += 2
+            else:
+                merged.append(tokens_list[k])
+                k += 1
+        tokens_list = merged
+        for ti, raw_token in enumerate(tokens_list):
+            pre, token, post = split_punct(raw_token)
             w = token.lower()
+            if ti + 1 < len(tokens_list):
+                _, nx_core, _ = split_punct(tokens_list[ti + 1])
+                nxt_tok = nx_core.lower() or None
+            else:
+                nxt_tok = None
             if not w.isalpha():
-                out.append(token)
-                report.append((token, token, 1.0, "non-alpha", "-"))
+                out.append(raw_token)
+                report.append((raw_token, raw_token, 1.0, "non-alpha", "-"))
                 continue
 
-            # acronym guard: vowel-less tokens (nlp, css, html) are
-            # intentional technical terms, never correction targets
-            if not set(w) & set("aeiou"):
-                out.append(token)
-                report.append((token, token, 1.0, "acronym", "-"))
-                prev = w
-                continue
+            # vowel-less tokens (nlp, css) are usually acronyms - but a
+            # cheap-slip typo like "wsnt" must still be correctable, so
+            # the decision happens after scoring (see below)
+            vowelless = not set(w) & set("aeiouy")
 
             probs = self.router.classify_proba(w)                # C2
             wtype = max(probs, key=probs.get)
@@ -78,7 +109,7 @@ class GhostKeyPipeline:
                     or (w in ner_protected and is_cap)
                     or (wtype == "name"
                         and (is_cap or probs["name"] > 0.90))):
-                out.append(token)
+                out.append(pre + token + post)
                 report.append((token, token, 1.0, "protected", wtype))
                 prev = w
                 continue
@@ -92,28 +123,46 @@ class GhostKeyPipeline:
                     best, conf = w, 1.0          # too unsure - keep as typed
                 has_tanglish = True
                 action = "tanglish-fix" if best != w else "tanglish-ok"
-                out.append(best)
+                out.append(pre + recase(token, best) + post)
                 report.append((token, best, conf, action, wtype))
                 prev = best
                 continue
 
             # english / gibberish -> ensemble correction (C1)
-            best, conf, _ = self.ck.correct_word(w, prev)
+            best, conf, _ = self.ck.correct_word(w, prev, nxt_tok)
             # words unknown to English also try the Tanglish lexicon;
             # whichever corrector is more confident wins the word
             t_best, t_conf = (correct_tanglish_word(w)
                               if not self.ck.lm.is_word(w) else (w, 0.0))
+            # evaluated Model-D policy: changing a real dictionary word
+            # needs high confidence; fixing a non-word is low-risk
+            from corrector import weighted_edit_distance as _wed
+            if vowelless and (_wed(w, best) > 0.6 or conf < 0.45):
+                out.append(pre + token + post)    # true acronym: keep
+                report.append((token, token, 1.0, "acronym", "-"))
+                prev = w
+                continue
+            if self.ck.is_real_word(w):
+                needed = auto_threshold          # real word: high bar
+            elif wtype == "name" or probs["name"] > 0.35:
+                # name-like unknown: correct only a single-operation slip
+                # (0.85 covers one deletion/insertion/transposition/adjacent)
+                needed = 0.45 if _wed(w, best) <= 0.85 else auto_threshold
+            else:
+                needed = 0.45                    # non-word: low-risk fix
             if t_best != w and t_conf >= 0.70 and t_conf > conf:
                 has_tanglish = True
-                out.append(t_best); action = "tanglish-fix"; conf = t_conf
-            elif best != w and conf >= auto_threshold:
-                out.append(best); action = "auto"
-            elif best != w and conf >= 0.60:
-                out.append(token); action = f"suggest:{best}"
+                out.append(pre + recase(token, t_best) + post)
+                action = "tanglish-fix"; conf = t_conf
+            elif best != w and conf >= needed:
+                out.append(pre + recase(token, best) + post); action = "auto"
+            elif best != w and conf >= 0.35:
+                out.append(pre + token + post); action = f"suggest:{best}"
             else:
-                out.append(token); action = "keep"
-            report.append((token, out[-1], round(conf, 3), action, wtype))
-            prev = out[-1]
+                out.append(pre + token + post); action = "keep"
+            core_out = out[-1].strip(".,!?;:'\"()[]").lower()
+            report.append((token, core_out, round(conf, 3), action, wtype))
+            prev = core_out
 
         corrected = " ".join(out)
 

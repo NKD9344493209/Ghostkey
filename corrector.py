@@ -24,8 +24,17 @@ LETTERS = string.ascii_lowercase
 class LanguageModel:
     def __init__(self):
         from nltk.corpus import brown, words as words_corpus
-        print("[GhostKey] building language model from Brown corpus...")
+        print("[GhostKey] building language model (Brown + chat corpora)...")
         tokens = [w.lower() for w in brown.words() if w.isalpha()]
+        # conversational text so "how are you", "im fine" etc. score well
+        try:
+            from nltk.corpus import nps_chat, webtext
+            chat = [w.lower() for w in nps_chat.words() if w.isalpha()]
+            web = [w.lower() for w in webtext.words() if w.isalpha()]
+            tokens = tokens + chat * 3 + web      # chat weighted up
+        except LookupError:
+            print("[GhostKey] chat corpora missing - run "
+                  "nltk.download('nps_chat'); nltk.download('webtext')")
         self.freq = Counter(tokens)
         self.total = sum(self.freq.values())
         self.bigrams = Counter(zip(tokens, tokens[1:]))
@@ -59,23 +68,27 @@ def sub_cost(a, b):
     return 1.5              # distant key - unlikely slip
 
 def weighted_edit_distance(s, t, max_cost=3.0):
-    """Damerau-Levenshtein with keyboard-aware substitution costs."""
+    """Damerau-Levenshtein with eyes-free cost model:
+    recovering a deleted letter (0.55) and transpositions (0.5) are
+    priced as cheaply as adjacent-key slips, because eyes-free typing
+    produces them constantly (validated by error analysis)."""
+    DEL, INS, TR = 0.8, 0.55, 0.5
     m, n = len(s), len(t)
-    if abs(m - n) * 0.8 > max_cost:
+    if abs(m - n) * INS > max_cost:
         return max_cost + 1
     prev2 = None
-    prev = list(range(n + 1))
+    prev = [j * INS for j in range(n + 1)]
     for i in range(1, m + 1):
-        cur = [i] + [0] * n
+        cur = [i * DEL] + [0] * n
         for j in range(1, n + 1):
             cur[j] = min(
-                prev[j] + 0.8,                        # deletion
-                cur[j - 1] + 0.8,                     # insertion
+                prev[j] + DEL,                        # user duplicated
+                cur[j - 1] + INS,                     # user deleted
                 prev[j - 1] + sub_cost(s[i-1], t[j-1])  # substitution
             )
             if (prev2 is not None and i > 1 and j > 1
                     and s[i-1] == t[j-2] and s[i-2] == t[j-1]):
-                cur[j] = min(cur[j], prev2[j - 2] + 0.7)  # transposition
+                cur[j] = min(cur[j], prev2[j - 2] + TR)   # transposition
         prev2, prev = prev, cur
     return prev[n]
 
@@ -124,7 +137,7 @@ class GhostKeyCorrector:
         cands = {c for c in cands if len(c) >= min_len}
         return cands or {word}
 
-    def score(self, typed, cand, prev_word):
+    def score(self, typed, cand, prev_word, next_word=None):
         """Combined noisy-channel score: keyboard physics x context x prior."""
         dist = weighted_edit_distance(typed.lower(), cand)
         # personal fingerprint bonus: user known to make this exact slip
@@ -134,6 +147,8 @@ class GhostKeyCorrector:
         context = self.lm.p_bigram(prev_word, cand)
         prior = self.lm.p_word(cand) + self.personal_freq[cand] / 1000.0
         score = keyboard_likelihood * (context ** 0.5) * (prior ** 0.30)
+        if next_word:      # bidirectional: candidate must also fit what follows
+            score *= self.lm.p_bigram(cand, next_word) ** 0.55
         # dictionary words never seen in the corpus (e.g. 'mucin', 'goof')
         # are valid but almost never what an eyes-free typist intended
         if self.lm.freq[cand] == 0 and not self.personal_freq[cand]:
@@ -141,15 +156,23 @@ class GhostKeyCorrector:
         return score
 
     # ----- public API -----
-    def correct_word(self, typed, prev_word=None, explain=False):
+    def is_real_word(self, w):
+        """Single letters other than a/i are treated as typos, not words."""
+        if len(w) == 1:
+            return w in ("a", "i")
+        return self.lm.is_word(w)
+
+    def correct_word(self, typed, prev_word=None, next_word=None, explain=False):
         """Returns (best_word, confidence, explanation_list)."""
         w = typed.lower()
         if w in self.never_correct or not w.isalpha():
             return typed, 1.0, [("protected/non-alpha", typed, 1.0)]
 
         cands = self.candidates(w)
+        if len(w) == 1:      # a single letter must appear in its correction
+            cands = {c for c in cands if w in c and len(c) <= 3} or {w}
         scored = sorted(
-            ((self.score(w, c, prev_word), c) for c in cands),
+            ((self.score(w, c, prev_word, next_word), c) for c in cands),
             reverse=True
         )
         best_score, best = scored[0]
@@ -179,8 +202,10 @@ class GhostKeyCorrector:
         out = []
         prev = None
         report = []
-        for token in text.split():
-            best, conf, _ = self.correct_word(token, prev)
+        tokens = text.split()
+        for i, token in enumerate(tokens):
+            nxt = tokens[i + 1].lower() if i + 1 < len(tokens) else None
+            best, conf, _ = self.correct_word(token, prev, nxt)
             if best != token.lower() and conf >= auto_threshold:
                 out.append(best); action = "auto"
             elif best != token.lower() and conf >= suggest_threshold:
