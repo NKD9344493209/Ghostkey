@@ -17,24 +17,32 @@ from functools import lru_cache
 
 from simulator import ADJACENT
 
+
+def ensure_nltk(packages):
+    """Industry rule: download what's missing instead of degrading silently."""
+    import nltk
+    for pkg in packages:
+        try:
+            nltk.data.find(f"corpora/{pkg}")
+        except LookupError:
+            print(f"[GhostKey] downloading missing corpus: {pkg} ...")
+            nltk.download(pkg, quiet=True)
+
 LETTERS = string.ascii_lowercase
 
 # ---------------- Language model (built once) ----------------
 
 class LanguageModel:
     def __init__(self):
+        ensure_nltk(["brown", "words", "nps_chat", "webtext"])
         from nltk.corpus import brown, words as words_corpus
+        from nltk.corpus import nps_chat, webtext
         print("[GhostKey] building language model (Brown + chat corpora)...")
         tokens = [w.lower() for w in brown.words() if w.isalpha()]
         # conversational text so "how are you", "im fine" etc. score well
-        try:
-            from nltk.corpus import nps_chat, webtext
-            chat = [w.lower() for w in nps_chat.words() if w.isalpha()]
-            web = [w.lower() for w in webtext.words() if w.isalpha()]
-            tokens = tokens + chat * 3 + web      # chat weighted up
-        except LookupError:
-            print("[GhostKey] chat corpora missing - run "
-                  "nltk.download('nps_chat'); nltk.download('webtext')")
+        chat = [w.lower() for w in nps_chat.words() if w.isalpha()]
+        web = [w.lower() for w in webtext.words() if w.isalpha()]
+        tokens = tokens + chat * 3 + web          # chat weighted up
         self.freq = Counter(tokens)
         self.total = sum(self.freq.values())
         self.bigrams = Counter(zip(tokens, tokens[1:]))
@@ -107,11 +115,39 @@ def edits1(word):
 # ---------------- The corrector ----------------
 
 class GhostKeyCorrector:
+    USERDATA = "ghostkey_userdata.json"
+
     def __init__(self, lm=None):
         self.lm = lm or LanguageModel()
         self.never_correct = set()        # user-protected words
         self.personal_freq = Counter()    # self-learning vocabulary
         self.fingerprint = Counter()      # user's (intended->typed) slips
+        self._load_userdata()
+
+    def _load_userdata(self):
+        import json, os
+        if os.path.exists(self.USERDATA):
+            try:
+                d = json.load(open(self.USERDATA, encoding="utf-8"))
+                self.never_correct = set(d.get("never", []))
+                self.personal_freq = Counter(d.get("personal", {}))
+                self.fingerprint = Counter(
+                    {tuple(k.split("|")): v
+                     for k, v in d.get("fingerprint", {}).items()})
+                print(f"[GhostKey] loaded user profile "
+                      f"({len(self.never_correct)} protected, "
+                      f"{len(self.personal_freq)} learned words)")
+            except Exception as e:
+                print("[GhostKey] user profile unreadable, starting fresh:", e)
+
+    def save_userdata(self):
+        import json
+        d = {"never": sorted(self.never_correct),
+             "personal": dict(self.personal_freq),
+             "fingerprint": {f"{a}|{b}": v
+                             for (a, b), v in self.fingerprint.items()}}
+        with open(self.USERDATA, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
 
     # ----- candidate scoring -----
     def candidates(self, word):
@@ -159,7 +195,7 @@ class GhostKeyCorrector:
     def is_real_word(self, w):
         """Single letters other than a/i are treated as typos, not words."""
         if len(w) == 1:
-            return w in ("a", "i")
+            return w in ("a", "i", "u")   # u = chat shorthand for you
         return self.lm.is_word(w)
 
     def correct_word(self, typed, prev_word=None, next_word=None, explain=False):
@@ -225,6 +261,7 @@ class GhostKeyCorrector:
         else:
             self.never_correct.add(typed.lower())
             self.personal_freq[typed.lower()] += 2
+        self.save_userdata()              # learning survives restarts
 
 
 if __name__ == "__main__":

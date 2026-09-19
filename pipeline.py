@@ -148,6 +148,8 @@ class GhostKeyPipeline:
                 # name-like unknown: correct only a single-operation slip
                 # (0.85 covers one deletion/insertion/transposition/adjacent)
                 needed = 0.45 if _wed(w, best) <= 0.85 else auto_threshold
+            elif len(w) >= 8 and _wed(w, best) <= 1.3:
+                needed = 0.30    # long typo, sparse candidate space: fix it
             else:
                 needed = 0.45                    # non-word: low-risk fix
             if t_best != w and t_conf >= 0.70 and t_conf > conf:
@@ -169,7 +171,11 @@ class GhostKeyPipeline:
         prediction = self.predict_next(prev)                     # C1 LM
 
         translation = None                                       # C6
-        if translate or has_tanglish:
+        from tanglish import TANGLISH_LEXICON
+        really_tanglish = any(
+            TANGLISH_LEXICON.get(t.lower(), t.lower()) not in ("", t.lower())
+            for t in corrected.split())
+        if translate or (has_tanglish and really_tanglish):
             translation = translate_tanglish(corrected.split())
 
         return {

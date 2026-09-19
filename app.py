@@ -50,12 +50,20 @@ THEMES = {
                       press="#ff7043", out_bg="#2a1626", out_bd="#7a3b52"),
 }
 
-st.markdown(
-    "<h1 style='margin-bottom:0'>⌨️ GhostKey</h1>"
-    "<p style='color:#888;margin-top:2px'>Six NLP concepts. One keyboard. "
-    "Corrects eyes-free typing — and explains itself. 100% offline.</p>",
-    unsafe_allow_html=True,
-)
+st.markdown("""
+<h1 style='margin-bottom:0'>⌨️ GhostKey</h1>
+<p style='color:#888;margin:2px 0 10px'>The AI keyboard for eyes-free typing
+— corrects, explains itself, and learns you.</p>
+<div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:6px'>
+  <span style='background:#14321f;color:#4ade80;border:1px solid #14532d;
+    padding:3px 12px;border-radius:20px;font-size:13px'>✔ 88.8% accuracy</span>
+  <span style='background:#1a2440;color:#7ea4ff;border:1px solid #23325c;
+    padding:3px 12px;border-radius:20px;font-size:13px'>🧠 6 NLP concepts</span>
+  <span style='background:#31213c;color:#d8a7ff;border:1px solid #4a2f5c;
+    padding:3px 12px;border-radius:20px;font-size:13px'>🔒 100% offline</span>
+  <span style='background:#3a2a18;color:#ffb86b;border:1px solid #5c421f;
+    padding:3px 12px;border-radius:20px;font-size:13px'>🗣️ Tanglish + voice</span>
+</div>""", unsafe_allow_html=True)
 
 theme_name = st.selectbox("🎨 Keyboard theme", list(THEMES),
                           label_visibility="collapsed")
@@ -296,4 +304,6 @@ is the one-time NLTK corpus download.
 """)
 
 st.divider()
-st.caption("GhostKey — eyes-free typing, explained corrections, offline by design.")
+st.caption("GhostKey · built by Naveen Kumar D · noisy-channel ensemble "
+           "(keyboard-weighted edit distance × bidirectional context × priors)"
+           " · runs 100% locally — no cloud, no data collection")
